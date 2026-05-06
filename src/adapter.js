@@ -131,7 +131,8 @@ function commandBase(msg, action) {
 }
 
 function commandsFromAnswer(req, msg, answer) {
-  const { text, attachments } = splitDirectives(answer);
+  const { text, attachments, residuals } = splitDirectives(answer);
+  if (residuals && residuals.length) logger.warn('directives: stripped non-directive bracket tokens', residuals);
   const commands = [];
 
   for (const chunk of chunkText(text, config.replyChunkSize)) {
