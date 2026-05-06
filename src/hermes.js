@@ -1,5 +1,12 @@
 import { config } from './config.js';
 
+// Hermes responses can take many minutes when its auxiliary providers are
+// slow (e.g. mimo flush_memories frequently times out at 91s and falls
+// back). Node's default fetch headersTimeout is 300s, which truncates
+// these legitimate-but-slow requests with a generic "fetch failed".
+// AbortSignal.timeout is the cleanest no-dependency way to extend it.
+const HERMES_REQUEST_TIMEOUT_MS = 15 * 60_000;
+
 function extractResponsesText(payload) {
   const output = Array.isArray(payload?.output) ? payload.output : [];
   const parts = [];
@@ -17,6 +24,7 @@ function extractResponsesText(payload) {
 export async function checkHermes() {
   const response = await fetch(`${config.hermesApiBaseUrl}/health`, {
     headers: { Authorization: `Bearer ${config.hermesApiKey}` },
+    signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`Hermes health failed: HTTP ${response.status}`);
   return response.json();
@@ -36,6 +44,7 @@ export async function askHermes({ conversation, input, instructions }) {
       conversation,
       store: true,
     }),
+    signal: AbortSignal.timeout(HERMES_REQUEST_TIMEOUT_MS),
   });
 
   const raw = await response.text();
