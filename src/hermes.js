@@ -1,11 +1,19 @@
+import { Agent } from 'undici';
 import { config } from './config.js';
 
 // Hermes responses can take many minutes when its auxiliary providers are
-// slow (e.g. mimo flush_memories frequently times out at 91s and falls
-// back). Node's default fetch headersTimeout is 300s, which truncates
-// these legitimate-but-slow requests with a generic "fetch failed".
-// AbortSignal.timeout is the cleanest no-dependency way to extend it.
-const HERMES_REQUEST_TIMEOUT_MS = 15 * 60_000;
+// slow (mimo flush_memories alone burns ~91s before falling back, and the
+// main inference can run another 3+ min on top). Node fetch's default
+// undici dispatcher has headersTimeout=300s AND bodyTimeout=300s — either
+// will abort a slow but legitimate response with a generic "fetch failed".
+// AbortSignal.timeout cannot override these, so we install an explicit
+// long-lived Agent. Pinned to the version Node bundles (process.versions
+// .undici) so the Request handler interface stays compatible.
+const HERMES_DISPATCHER = new Agent({
+  headersTimeout: 15 * 60_000,
+  bodyTimeout: 15 * 60_000,
+  connectTimeout: 30_000,
+});
 
 function extractResponsesText(payload) {
   const output = Array.isArray(payload?.output) ? payload.output : [];
@@ -24,7 +32,7 @@ function extractResponsesText(payload) {
 export async function checkHermes() {
   const response = await fetch(`${config.hermesApiBaseUrl}/health`, {
     headers: { Authorization: `Bearer ${config.hermesApiKey}` },
-    signal: AbortSignal.timeout(30_000),
+    dispatcher: HERMES_DISPATCHER,
   });
   if (!response.ok) throw new Error(`Hermes health failed: HTTP ${response.status}`);
   return response.json();
@@ -44,7 +52,7 @@ export async function askHermes({ conversation, input, instructions }) {
       conversation,
       store: true,
     }),
-    signal: AbortSignal.timeout(HERMES_REQUEST_TIMEOUT_MS),
+    dispatcher: HERMES_DISPATCHER,
   });
 
   const raw = await response.text();
