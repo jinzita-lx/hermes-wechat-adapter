@@ -1,0 +1,15 @@
+[Unit]
+Description=Hermes WeChat Personal Adapter
+After=network-online.target hermes-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/hermes-wechat-adapter
+EnvironmentFile=/root/hermes-wechat-adapter/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=8
+
+[Install]
+WantedBy=default.target
