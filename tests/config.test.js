@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, validateConfig } from '../src/config.js';
 
 test('loadConfig uses provider-aware defaults', () => {
   const cfg = loadConfig({
@@ -63,4 +63,20 @@ test('loadConfig falls back safely for invalid provider names', () => {
 
   assert.equal(cfg.defaultProvider, 'gewechat');
   assert.equal(cfg.fallbackProvider, 'windows_sidecar');
+});
+
+test('loadConfig validates restricted Hermes endpoint pairings', () => {
+  const missingApiKey = loadConfig({
+    ADAPTER_AUTH_TOKEN: 'token',
+    HERMES_API_KEY: 'hermes-key',
+    HERMES_RESTRICTED_API_BASE_URL: 'http://127.0.0.1:8742/v1',
+  });
+  const missingBaseUrl = loadConfig({
+    ADAPTER_AUTH_TOKEN: 'token',
+    HERMES_API_KEY: 'hermes-key',
+    HERMES_RESTRICTED_API_KEY: 'restricted-key',
+  });
+
+  assert.deepEqual(validateConfig(missingApiKey), ['HERMES_RESTRICTED_API_KEY']);
+  assert.deepEqual(validateConfig(missingBaseUrl), ['HERMES_RESTRICTED_API_BASE_URL']);
 });

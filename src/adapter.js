@@ -85,26 +85,64 @@ function cleanGroupText(text) {
   return stripActivationPrefix(withoutMention, config.activationPrefixes);
 }
 
-function bridgeInstructions() {
+function isAdminUser(msg) {
+  return config.adminUsers.some((allowed) => (
+    allowed === msg.chat_id ||
+    allowed === msg.chat_name ||
+    allowed === msg.sender_id ||
+    allowed === msg.sender_name
+  ));
+}
+
+export function toolAccessProfile(msg) {
+  if (msg.is_group) {
+    return {
+      access: 'restricted',
+      isAdmin: false,
+      reason: 'group_restricted',
+    };
+  }
+
+  const admin = isAdminUser(msg);
+  return {
+    access: admin ? 'full' : 'restricted',
+    isAdmin: admin,
+    reason: admin ? 'dm_admin' : 'dm_non_admin',
+  };
+}
+
+export function bridgeInstructions(accessProfile) {
+  const access = accessProfile?.access || 'full';
+  const isRestricted = access === 'restricted';
   return [
     'You are talking to users through a WeChat personal-account adapter.',
     'Reply naturally and concisely. Avoid spammy or bulk-message behavior.',
-    'You can use Hermes tools to read local files, write files, run tasks, and inspect uploaded media.',
-    'Incoming WeChat media and files are saved on this Linux machine; the prompt includes local absolute paths when available.',
-    'If you create a file that should be sent back to WeChat, include exactly one directive on its own line: [[send_file:/absolute/path/to/file]].',
-    'Images, videos, and voice/audio may use [[send_image:/path]], [[send_video:/path]], or [[send_voice:/path]].',
-    'Only use send directives for real files that exist on this Linux machine.',
+    isRestricted
+      ? 'Security policy: do NOT run local shell commands, do NOT inspect or modify local files, and do NOT ask Hermes to use terminal/file read/file write/patch/search capabilities.'
+      : 'You can use Hermes tools to read local files, write files, run tasks, and inspect uploaded media.',
+    isRestricted
+      ? 'Treat uploaded media only as user-provided context. If a task would require local command execution or local file access, refuse briefly and ask the user to contact an administrator.'
+      : 'Incoming WeChat media and files are saved on this Linux machine; the prompt includes local absolute paths when available.',
+    isRestricted
+      ? 'Do not emit send_file/send_image/send_video/send_voice directives that depend on creating or reading local files.'
+      : 'If you create a file that should be sent back to WeChat, include exactly one directive on its own line: [[send_file:/absolute/path/to/file]].',
+    isRestricted
+      ? 'In restricted mode, answer with plain text only.'
+      : 'Images, videos, and voice/audio may use [[send_image:/path]], [[send_video:/path]], or [[send_voice:/path]].',
+    isRestricted ? '' : 'Only use send directives for real files that exist on this Linux machine.',
     config.instructionsExtra,
   ].filter(Boolean).join('\n');
 }
 
-function buildPrompt(msg, text) {
+function buildPrompt(msg, text, accessProfile) {
   const lines = [];
   lines.push(`WeChat provider: ${msg.provider}`);
   lines.push(`WeChat chat id: ${msg.chat_id}`);
   lines.push(`WeChat chat name: ${msg.chat_name || '(unknown)'}`);
   lines.push(`Group chat: ${msg.is_group ? 'yes' : 'no'}`);
   lines.push(`Sender: ${msg.sender_name || '(unknown)'} (${msg.sender_id || 'unknown'})`);
+  lines.push(`Tool access: ${accessProfile?.access || 'full'}`);
+  if (accessProfile?.reason) lines.push(`Access reason: ${accessProfile.reason}`);
   if (text) lines.push(`Message text:\n${text}`);
   if (msg.attachments.length) {
     lines.push('Attachments:');
@@ -287,14 +325,24 @@ export async function handleIncomingMessage(req, raw, {
     return builtIn;
   }
 
+  const accessProfile = toolAccessProfile(msg);
   const scopedChatId = providerChatKey(msg.provider, msg.chat_id);
   const commands = await enqueueChat(scopedChatId, async () => {
-    logger.info('message', `provider=${msg.provider}`, `device=${msg.device_id}`, `chat=${msg.chat_name || msg.chat_id}`, `group=${msg.is_group}`);
+    logger.info(
+      'message',
+      `provider=${msg.provider}`,
+      `device=${msg.device_id}`,
+      `chat=${msg.chat_name || msg.chat_id}`,
+      `group=${msg.is_group}`,
+      `access=${accessProfile.access}`,
+      `admin=${accessProfile.isAdmin}`,
+    );
     try {
       const answer = await askHermes({
         conversation: createConversationKey(msg.provider, msg.chat_id),
-        input: buildPrompt(msg, text),
-        instructions: bridgeInstructions(),
+        input: buildPrompt(msg, text, accessProfile),
+        instructions: bridgeInstructions(accessProfile),
+        access: accessProfile.access,
       });
       return commandsFromAnswer(req, msg, answer);
     } catch (error) {

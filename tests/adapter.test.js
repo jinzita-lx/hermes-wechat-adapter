@@ -5,7 +5,10 @@ import {
   builtInCommand,
   shouldProcessInboundMessage,
   resetAdapterStateForTests,
+  toolAccessProfile,
+  bridgeInstructions,
 } from '../src/adapter.js';
+import { config } from '../src/config.js';
 
 test.beforeEach(() => {
   resetAdapterStateForTests();
@@ -33,6 +36,75 @@ test('builtInCommand /id includes provider metadata', () => {
 
   assert.equal(commands.length, 1);
   assert.match(commands[0].text, /provider: gewechat/);
+});
+
+test('loadConfig exposes admin and restricted Hermes settings', async () => {
+  const { loadConfig } = await import('../src/config.js');
+  const cfg = loadConfig({
+    ADAPTER_AUTH_TOKEN: 'token',
+    HERMES_API_KEY: 'full-key',
+    HERMES_RESTRICTED_API_BASE_URL: 'http://127.0.0.1:8742/v1/',
+    HERMES_RESTRICTED_API_KEY: 'restricted-key',
+    HERMES_RESTRICTED_MODEL: 'restricted-model',
+    WECHAT_ADMIN_USERS: '卷鑫菜,wxid_admin',
+  });
+
+  assert.deepEqual(cfg.adminUsers, ['卷鑫菜', 'wxid_admin']);
+  assert.equal(cfg.restrictedHermesApiBaseUrl, 'http://127.0.0.1:8742/v1');
+  assert.equal(cfg.restrictedHermesApiKey, 'restricted-key');
+  assert.equal(cfg.restrictedHermesModel, 'restricted-model');
+});
+
+test('toolAccessProfile routes groups and non-admin DMs to restricted tools but admins to full tools', () => {
+  const originalAdmins = [...config.adminUsers];
+  config.adminUsers.splice(0, config.adminUsers.length, '卷鑫菜');
+
+  assert.deepEqual(toolAccessProfile({
+    is_group: true,
+    chat_id: 'room-1',
+    chat_name: '测试群',
+    sender_id: 'user-2',
+    sender_name: '普通成员',
+  }), {
+    access: 'restricted',
+    isAdmin: false,
+    reason: 'group_restricted',
+  });
+
+  assert.deepEqual(toolAccessProfile({
+    is_group: false,
+    chat_id: 'wxid-user',
+    chat_name: '普通用户',
+    sender_id: 'wxid-user',
+    sender_name: '普通用户',
+  }), {
+    access: 'restricted',
+    isAdmin: false,
+    reason: 'dm_non_admin',
+  });
+
+  assert.deepEqual(toolAccessProfile({
+    is_group: false,
+    chat_id: 'wxid-admin',
+    chat_name: '卷鑫菜',
+    sender_id: 'wxid-admin',
+    sender_name: '卷鑫菜',
+  }), {
+    access: 'full',
+    isAdmin: true,
+    reason: 'dm_admin',
+  });
+
+  config.adminUsers.splice(0, config.adminUsers.length, ...originalAdmins);
+});
+
+test('bridgeInstructions in restricted mode explicitly forbids local command and file access', () => {
+  const text = bridgeInstructions({ access: 'restricted', reason: 'group_restricted' });
+
+  assert.match(text, /do NOT run local shell commands/i);
+  assert.match(text, /do NOT inspect or modify local files/i);
+  assert.match(text, /contact an administrator/i);
+  assert.match(text, /plain text only/i);
 });
 
 test('shouldProcessInboundMessage suppresses duplicate provider message ids', () => {

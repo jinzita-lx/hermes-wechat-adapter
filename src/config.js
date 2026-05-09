@@ -99,9 +99,13 @@ export function loadConfig(env = process.env) {
     hermesApiBaseUrl: (env.HERMES_API_BASE_URL || 'http://127.0.0.1:8642/v1').replace(/\/+$/, ''),
     hermesApiKey: env.HERMES_API_KEY || '',
     hermesModel: env.HERMES_MODEL || 'hermes-agent',
+    restrictedHermesApiBaseUrl: (env.HERMES_RESTRICTED_API_BASE_URL || '').replace(/\/+$/, ''),
+    restrictedHermesApiKey: env.HERMES_RESTRICTED_API_KEY || '',
+    restrictedHermesModel: env.HERMES_RESTRICTED_MODEL || env.HERMES_MODEL || 'hermes-agent',
 
     dmPolicy: (env.WECHAT_DM_POLICY || 'open').toLowerCase(),
     allowedContacts: listEnvFrom(env, 'WECHAT_ALLOWED_CONTACTS'),
+    adminUsers: listEnvFrom(env, 'WECHAT_ADMIN_USERS'),
     groupPolicy: (env.WECHAT_GROUP_POLICY || 'disabled').toLowerCase(),
     allowedRooms: listEnvFrom(env, 'WECHAT_ALLOWED_ROOMS'),
     requireMentionInGroups: boolEnvFrom(env, 'WECHAT_REQUIRE_MENTION_IN_GROUPS', true),
@@ -135,6 +139,8 @@ export function validateConfig(cfg = config) {
   const missing = [];
   if (!cfg.authToken) missing.push('ADAPTER_AUTH_TOKEN');
   if (!cfg.hermesApiKey) missing.push('HERMES_API_KEY');
+  if (cfg.restrictedHermesApiBaseUrl && !cfg.restrictedHermesApiKey) missing.push('HERMES_RESTRICTED_API_KEY');
+  if (cfg.restrictedHermesApiKey && !cfg.restrictedHermesApiBaseUrl) missing.push('HERMES_RESTRICTED_API_BASE_URL');
   return missing;
 }
 

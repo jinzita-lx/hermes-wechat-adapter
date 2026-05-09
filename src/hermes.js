@@ -38,15 +38,33 @@ export async function checkHermes() {
   return response.json();
 }
 
-export async function askHermes({ conversation, input, instructions }) {
-  const response = await fetch(`${config.hermesApiBaseUrl}/responses`, {
+function resolveHermesRequestOptions(access = 'full') {
+  const restricted = access === 'restricted';
+  if (restricted && config.restrictedHermesApiBaseUrl && config.restrictedHermesApiKey) {
+    return {
+      baseUrl: config.restrictedHermesApiBaseUrl,
+      apiKey: config.restrictedHermesApiKey,
+      model: config.restrictedHermesModel,
+    };
+  }
+
+  return {
+    baseUrl: config.hermesApiBaseUrl,
+    apiKey: config.hermesApiKey,
+    model: config.hermesModel,
+  };
+}
+
+export async function askHermes({ conversation, input, instructions, access = 'full' }) {
+  const request = resolveHermesRequestOptions(access);
+  const response = await fetch(`${request.baseUrl}/responses`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${config.hermesApiKey}`,
+      Authorization: `Bearer ${request.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: config.hermesModel,
+      model: request.model,
       input,
       instructions,
       conversation,
