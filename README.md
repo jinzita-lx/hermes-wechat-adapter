@@ -1,37 +1,36 @@
-# Hermes WeChat Personal Adapter
+# Hermes 微信个人号适配器
 
-Linux-side adapter for a remote Windows WeChat personal-account sidecar.
+为远端 Windows 微信个人号 sidecar 服务的 Linux 侧适配器。
 
-The Windows sidecar owns the real PC WeChat client. This adapter owns policy,
-Hermes conversation state, file storage, and Hermes API calls.
+Windows sidecar 持有真实的 PC 微信客户端。本适配器负责策略、Hermes 会话状态、文件存储以及 Hermes API 调用。
 
-## Runtime
+## 运行配置
 
-- Hermes API: `http://127.0.0.1:8642/v1`
-- Adapter: `0.0.0.0:8787`
-- Auth: bearer token in `.env` as `ADAPTER_AUTH_TOKEN`
+- Hermes API：`http://127.0.0.1:8642/v1`
+- 适配器：`0.0.0.0:8787`
+- 鉴权：通过 `.env` 中的 `ADAPTER_AUTH_TOKEN` 提供 bearer token
 
-## Protocol
+## 协议
 
-All HTTP requests except `/health` must include either:
+除 `/health` 外的所有 HTTP 请求都必须携带以下任一鉴权头：
 
 ```http
 Authorization: Bearer <ADAPTER_AUTH_TOKEN>
 ```
 
-or:
+或：
 
 ```http
 X-Adapter-Token: <ADAPTER_AUTH_TOKEN>
 ```
 
-WebSocket:
+WebSocket：
 
 ```text
 ws://<linux-host>:8787/ws?device_id=windows-main&token=<ADAPTER_AUTH_TOKEN>
 ```
 
-Incoming WeChat message:
+入站微信消息：
 
 ```json
 {
@@ -51,7 +50,7 @@ Incoming WeChat message:
 }
 ```
 
-Commands sent back to Windows look like:
+回传到 Windows 的指令格式：
 
 ```json
 {
@@ -67,7 +66,7 @@ Commands sent back to Windows look like:
 }
 ```
 
-File upload:
+文件上传：
 
 ```bash
 curl -X POST "http://<linux-host>:8787/files?filename=1.png&type=image" \
@@ -75,13 +74,13 @@ curl -X POST "http://<linux-host>:8787/files?filename=1.png&type=image" \
   --data-binary "@1.png"
 ```
 
-Use the returned `file.id` in message attachments:
+把返回的 `file.id` 用在消息附件中：
 
 ```json
 {"type": "image", "file_id": "returned-file-id"}
 ```
 
-## Check
+## 自检
 
 ```bash
 cd /root/hermes-wechat-adapter
@@ -89,29 +88,29 @@ npm run check
 curl http://127.0.0.1:8787/health
 ```
 
-## Service
+## 服务
 
-The installed user service is:
+已安装的 user service：
 
 ```bash
 systemctl --user status hermes-wechat-adapter.service
 ```
 
-Logs:
+日志：
 
 ```bash
 journalctl --user -u hermes-wechat-adapter.service -f
 ```
 
-## Safety Defaults
+## 默认安全策略
 
-Group chats are disabled by default:
+群聊默认禁用：
 
 ```env
 WECHAT_GROUP_POLICY=disabled
 ```
 
-After private-chat testing, enable specific groups only:
+私聊测试通过后，按白名单放开特定群：
 
 ```env
 WECHAT_GROUP_POLICY=allowlist
