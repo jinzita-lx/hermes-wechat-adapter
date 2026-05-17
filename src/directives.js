@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
 const DIRECTIVE_RE = /\[\[(send_(?:file|image|video|voice|audio)):(.*?)\]\]/gis;
 // Strip stray double-bracket tokens the model emits (e.g. `[[audio_as_voice]]`)
@@ -25,6 +26,18 @@ export function splitDirectives(text) {
   return { text: cleaned, attachments, residuals };
 }
 
+// A send directive targets either a local absolute path or a remote http(s)
+// URL. Restricted (group) chats only accept remote URLs — see commandsFromAnswer.
+export function isRemoteUrl(target) {
+  if (!target) return false;
+  try {
+    const url = new URL(String(target).trim());
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function validateAttachmentPath(filePath) {
   if (!filePath || !filePath.startsWith('/')) {
     return { ok: false, reason: 'path must be absolute' };
@@ -36,4 +49,35 @@ export function validateAttachmentPath(filePath) {
   } catch (error) {
     return { ok: false, reason: error.message };
   }
+}
+
+// Resolve `filePath` and confirm it is a regular file located inside one of
+// `roots`. realpath resolves symlinks and `..`, so a directive cannot escape
+// the allowlist. Restricted (group) chats use this to gate attachments to the
+// model's generated-image output directory.
+export function resolveWithinRoots(filePath, roots) {
+  if (!filePath || !filePath.startsWith('/')) {
+    return { ok: false, reason: 'path must be absolute' };
+  }
+  let realPath;
+  try {
+    realPath = fs.realpathSync(filePath);
+    if (!fs.statSync(realPath).isFile()) {
+      return { ok: false, reason: 'path is not a file' };
+    }
+  } catch (error) {
+    return { ok: false, reason: error.message };
+  }
+  for (const root of roots || []) {
+    let realRoot;
+    try {
+      realRoot = fs.realpathSync(root);
+    } catch {
+      continue; // configured root does not exist — skip it
+    }
+    if (realPath === realRoot || realPath.startsWith(realRoot + path.sep)) {
+      return { ok: true, realPath };
+    }
+  }
+  return { ok: false, reason: 'not inside an allowed generated-output directory' };
 }

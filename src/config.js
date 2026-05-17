@@ -116,6 +116,12 @@ export function loadConfig(env = process.env) {
     maxUploadBytes: intEnvFrom(env, 'MAX_UPLOAD_BYTES', 50 * 1024 * 1024),
     dataDir,
     filesDir,
+    // Restricted (group) chats may only send files located under these roots —
+    // the Hermes image_generate output dir. Anything else is a pre-existing
+    // local file and is refused.
+    restrictedSendableRoots: listEnvFrom(env, 'WECHAT_RESTRICTED_SENDABLE_ROOTS').length
+      ? listEnvFrom(env, 'WECHAT_RESTRICTED_SENDABLE_ROOTS')
+      : ['/root/.hermes/generated-images'],
     commandPollTimeoutMs: intEnvFrom(env, 'COMMAND_POLL_TIMEOUT_MS', 25000),
     instructionsExtra: env.HERMES_INSTRUCTIONS_EXTRA || '',
 

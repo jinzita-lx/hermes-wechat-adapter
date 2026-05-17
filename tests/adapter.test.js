@@ -98,13 +98,23 @@ test('toolAccessProfile routes groups and non-admin DMs to restricted tools but 
   config.adminUsers.splice(0, config.adminUsers.length, ...originalAdmins);
 });
 
-test('bridgeInstructions in restricted mode explicitly forbids local command and file access', () => {
+test('bridgeInstructions in restricted mode forbids shell/file access but allows the image tool', () => {
   const text = bridgeInstructions({ access: 'restricted', reason: 'group_restricted' });
 
   assert.match(text, /do NOT run local shell commands/i);
   assert.match(text, /do NOT inspect or modify local files/i);
   assert.match(text, /contact an administrator/i);
-  assert.match(text, /plain text only/i);
+  // Image generation is allowed; the generated image is sent by its local path.
+  assert.match(text, /generate images with the image generation tool/i);
+  assert.match(text, /\[\[send_image:/);
+  assert.match(text, /never put any other local filesystem path/i);
+});
+
+test('bridgeInstructions in full mode keeps local-path send directives', () => {
+  const text = bridgeInstructions({ access: 'full', reason: 'dm_admin' });
+
+  assert.match(text, /\[\[send_file:\/absolute\/path\/to\/file\]\]/);
+  assert.match(text, /absolute local path .* or a public https URL/i);
 });
 
 test('shouldProcessInboundMessage suppresses duplicate provider message ids', () => {

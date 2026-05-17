@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import { config } from './config.js';
 import { askHermes } from './hermes.js';
-import { splitDirectives, validateAttachmentPath } from './directives.js';
+import { splitDirectives, validateAttachmentPath, isRemoteUrl, resolveWithinRoots } from './directives.js';
 import { chunkText, escapeRegExp, hasActivationPrefix, stripActivationPrefix } from './text.js';
-import { publicFileDescriptor, registerLocalFile, resolveMessageAttachment } from './files.js';
+import { publicFileDescriptor, registerLocalFile, resolveMessageAttachment, downloadRemoteFile } from './files.js';
 import { logger } from './logger.js';
 import { buildMessageDedupeKey, providerDeviceKey, resolveProviderName } from './providers.js';
 
@@ -124,12 +124,12 @@ export function bridgeInstructions(accessProfile) {
       ? 'Treat uploaded media only as user-provided context. If a task would require local command execution or local file access, refuse briefly and ask the user to contact an administrator.'
       : 'Incoming WeChat media and files are saved on this Linux machine; the prompt includes local absolute paths when available.',
     isRestricted
-      ? 'Do not emit send_file/send_image/send_video/send_voice directives that depend on creating or reading local files.'
+      ? 'You may generate images with the image generation tool when the user asks. The tool returns the absolute local path of the generated image file. To send it to WeChat, output exactly one directive on its own line: [[send_image:/absolute/path/returned/by/the/tool.png]] — use the exact path the tool returned.'
       : 'If you create a file that should be sent back to WeChat, include exactly one directive on its own line: [[send_file:/absolute/path/to/file]].',
     isRestricted
-      ? 'In restricted mode, answer with plain text only.'
+      ? 'Only send images you generated with the image generation tool in this conversation. Never put any other local filesystem path in a send directive, and do not emit [[send_file:...]]. Apart from the send_image directive, reply in plain text.'
       : 'Images, videos, and voice/audio may use [[send_image:/path]], [[send_video:/path]], or [[send_voice:/path]].',
-    isRestricted ? '' : 'Only use send directives for real files that exist on this Linux machine.',
+    isRestricted ? '' : 'Send directives accept either an absolute local path on this Linux machine or a public https URL.',
     config.instructionsExtra,
   ].filter(Boolean).join('\n');
 }
@@ -168,9 +168,10 @@ function commandBase(msg, action) {
   };
 }
 
-function commandsFromAnswer(req, msg, answer) {
+async function commandsFromAnswer(req, msg, answer, accessProfile) {
   const { text, attachments, residuals } = splitDirectives(answer);
   if (residuals && residuals.length) logger.warn('directives: stripped non-directive bracket tokens', residuals);
+  const restricted = (accessProfile?.access || 'full') === 'restricted';
   const commands = [];
 
   for (const chunk of chunkText(text, config.replyChunkSize)) {
@@ -178,20 +179,51 @@ function commandsFromAnswer(req, msg, answer) {
   }
 
   for (const attachment of attachments) {
-    const status = validateAttachmentPath(attachment.path);
-    if (!status.ok) {
-      commands.push({
-        ...commandBase(msg, 'send_text'),
-        text: `附件发送失败：${attachment.path}\n原因：${status.reason}`,
-      });
+    const kind = attachment.kind.replace(/^send_/, '').replace('audio', 'voice');
+    const target = attachment.path;
+    const remote = isRemoteUrl(target);
+    const fail = (reason) => commands.push({
+      ...commandBase(msg, 'send_text'),
+      text: `附件发送失败：${target}\n原因：${reason}`,
+    });
+
+    let meta;
+    try {
+      if (restricted) {
+        // Restricted (group / non-admin) chats may ONLY send files the model
+        // generated this turn — image_generate writes them under
+        // config.restrictedSendableRoots. URLs and any other local path are
+        // refused, so a pre-existing local file can never be exfiltrated.
+        if (remote) {
+          fail('群聊/受限模式只能发送模型本回合生成的图片，不接受 URL。');
+          continue;
+        }
+        const verdict = resolveWithinRoots(target, config.restrictedSendableRoots);
+        if (!verdict.ok) {
+          fail(`群聊/受限模式只能发送模型生成的图片（限目录 ${config.restrictedSendableRoots.join(', ')}）：${verdict.reason}`);
+          continue;
+        }
+        meta = registerLocalFile(target, kind);
+      } else if (remote) {
+        meta = await downloadRemoteFile(target, kind);
+      } else {
+        const status = validateAttachmentPath(target);
+        if (!status.ok) {
+          fail(status.reason);
+          continue;
+        }
+        meta = registerLocalFile(target, kind);
+      }
+    } catch (error) {
+      logger.warn('attachment failed', target, error.message);
+      fail(error.message);
       continue;
     }
-    const kind = attachment.kind.replace(/^send_/, '').replace('audio', 'voice');
-    const meta = registerLocalFile(attachment.path, kind);
+
     commands.push({
       ...commandBase(msg, kind === 'image' ? 'send_image' : 'send_file'),
       file: publicFileDescriptor(req, meta),
-      original_path: attachment.path,
+      original_path: target,
     });
   }
 
@@ -344,7 +376,7 @@ export async function handleIncomingMessage(req, raw, {
         instructions: bridgeInstructions(accessProfile),
         access: accessProfile.access,
       });
-      return commandsFromAnswer(req, msg, answer);
+      return await commandsFromAnswer(req, msg, answer, accessProfile);
     } catch (error) {
       logger.error('Hermes failed:', error);
       return [{ ...commandBase(msg, 'send_text'), text: `Hermes 处理失败：${error.message}` }];
