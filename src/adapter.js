@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { config } from './config.js';
 import { askHermes } from './hermes.js';
 import { splitDirectives, validateAttachmentPath, isRemoteUrl, resolveWithinRoots } from './directives.js';
@@ -7,11 +9,32 @@ import { publicFileDescriptor, registerLocalFile, resolveMessageAttachment, down
 import { logger } from './logger.js';
 import { buildMessageDedupeKey, providerDeviceKey, resolveProviderName } from './providers.js';
 
-const resetNonceByChat = new Map();
+const RESET_NONCE_FILE = path.join(config.dataDir, 'reset-nonces.json');
+
+// Persisted so a /reset survives adapter restarts — otherwise each restart silently reattaches the chat to its pre-reset conversation.
+function loadResetNonces() {
+  try {
+    const obj = JSON.parse(fs.readFileSync(RESET_NONCE_FILE, 'utf8'));
+    return new Map(Object.entries(obj).filter(([, v]) => Number.isInteger(v) && v >= 0));
+  } catch {
+    return new Map();
+  }
+}
+
+const resetNonceByChat = loadResetNonces();
 const queueByChat = new Map();
 const pendingByDevice = new Map();
 const waitersByDevice = new Map();
 const recentInbound = new Map();
+
+function saveResetNonces() {
+  try {
+    fs.mkdirSync(config.dataDir, { recursive: true });
+    fs.writeFileSync(RESET_NONCE_FILE, JSON.stringify(Object.fromEntries(resetNonceByChat), null, 2));
+  } catch (error) {
+    logger.warn('failed to persist reset nonces:', error.message);
+  }
+}
 
 function stableId(value) {
   return crypto.createHash('sha256').update(String(value)).digest('base64url').slice(0, 32);
@@ -21,10 +44,19 @@ function providerChatKey(provider, chatId) {
   return `${resolveProviderName(provider, config.defaultProvider)}:${chatId}`;
 }
 
+// Local-date bucket: each chat rotates to a fresh Hermes conversation daily, bounding context growth even without /reset.
+function conversationEpoch() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
+
 export function createConversationKey(provider, chatId) {
   const scopedChat = providerChatKey(provider, chatId);
   const nonce = resetNonceByChat.get(scopedChat) || 0;
-  return `wechat-personal-${stableId(`${scopedChat}:${nonce}`)}`;
+  return `wechat-personal-${stableId(`${scopedChat}:${nonce}:${conversationEpoch()}`)}`;
 }
 
 function normalizeMessage(raw, fallbackDeviceId, fallbackProvider = config.defaultProvider) {
@@ -300,6 +332,7 @@ export function builtInCommand(msg, text) {
   if (command === '/reset') {
     const scopedChat = providerChatKey(msg.provider, msg.chat_id);
     resetNonceByChat.set(scopedChat, (resetNonceByChat.get(scopedChat) || 0) + 1);
+    saveResetNonces();
     return [{ ...commandBase(msg, 'send_text'), text: '已重置当前微信会话的 Hermes 上下文。' }];
   }
   if (command === '/help') {
