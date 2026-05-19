@@ -126,8 +126,26 @@ function isAdminUser(msg) {
   ));
 }
 
+// A group trusted enough to grant an admin sender full tool access. Scoped
+// explicitly via WECHAT_ADMIN_ROOMS because WeChat exposes only the
+// user-settable (spoofable) display name to identify a group member.
+function isAdminRoom(msg) {
+  return config.adminRooms.some((room) => (
+    room === msg.chat_id || room === msg.chat_name
+  ));
+}
+
 export function toolAccessProfile(msg) {
   if (msg.is_group) {
+    // Full tool access inside a group requires BOTH an admin nickname and the
+    // room being in WECHAT_ADMIN_ROOMS — the nickname alone is spoofable.
+    if (isAdminUser(msg) && isAdminRoom(msg)) {
+      return {
+        access: 'full',
+        isAdmin: true,
+        reason: 'group_admin_room',
+      };
+    }
     return {
       access: 'restricted',
       isAdmin: false,

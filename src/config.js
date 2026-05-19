@@ -108,6 +108,7 @@ export function loadConfig(env = process.env) {
     adminUsers: listEnvFrom(env, 'WECHAT_ADMIN_USERS'),
     groupPolicy: (env.WECHAT_GROUP_POLICY || 'disabled').toLowerCase(),
     allowedRooms: listEnvFrom(env, 'WECHAT_ALLOWED_ROOMS'),
+    adminRooms: listEnvFrom(env, 'WECHAT_ADMIN_ROOMS'),
     requireMentionInGroups: boolEnvFrom(env, 'WECHAT_REQUIRE_MENTION_IN_GROUPS', true),
     activationPrefixes: listEnvFrom(env, 'WECHAT_ACTIVATION_PREFIXES'),
     botAlias: env.BOT_ALIAS || 'Hermes',
